@@ -9,12 +9,12 @@ struct MyTLS {
     MyTLS() {
         int fd = open("/dev/urandom", O_RDONLY);
         assert(fd != -1);
-        ssize_t err = read(fd, &seed, sizeof(seed));
+        ssize_t err = read(fd, &_seed, sizeof(_seed));
         assert(err != -1);
         close(fd);
     }
 
     std::list<Event*> _eventsList;
-    size_t _cachedSize;
-    unsigned int seed;
+    size_t _cachedSize, _geom;
+    unsigned int _seed;
 };

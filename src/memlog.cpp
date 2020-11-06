@@ -12,6 +12,7 @@
 #include <cassert>
 #include "event.hpp"
 #include "mytls.hpp"
+#include <cmath>
 
 #ifdef TARGET_MAC
 #define MALLOC "_malloc"
@@ -26,10 +27,17 @@ using namespace std;
 static int fd;
 static PIN_LOCK fdLock;
 static TLS_KEY tls_key = INVALID_TLS_KEY;
-static const int THRESHOLD = RAND_MAX / 10;
+static const double P = 0.01; // TODO: adjust P
+
+inline size_t GetNext(unsigned int *seedp, double p) {
+    int r = rand_r(seedp); // TODO: use better RNG
+    float u = (float) r / (float) RAND_MAX;
+    size_t geom = (size_t) ceil(log(u) / log(1.0 - p));
+    return geom;
+}
 
 void WriteEvents(int fd, PIN_LOCK *fdLock, list<Event*>* eventsList) {
-    const static size_t BUF_LEN = 65536; // TODO: adjust BUF_LEN
+    static const size_t BUF_LEN = 524288; // TODO: adjust BUF_LEN
     Event *buf = new Event[BUF_LEN];
     assert(buf != nullptr);
     int nextIndex = 0;
@@ -86,23 +94,27 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
-    const static size_t MAX_SIZE = 67108864; // TODO: write out events somewhere else?
+    static const size_t MAX_SIZE = 67108864; // TODO: write out events somewhere else?
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    if (rand_r(&(tls->seed)) < THRESHOLD) { // TODO: use better RNG
-        return; 
+    if (tls->_geom > 0) {
+        tls->_geom--;
+        return;
     }
     tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId));
     if (tls->_eventsList.size() >= MAX_SIZE) {
         WriteEvents(fd, &fdLock, &(tls->_eventsList));
     }
+    tls->_geom = GetNext(&(tls->_seed), P);
 }
 
 VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    if (rand_r(&(tls->seed)) < THRESHOLD) { // TODO: use better RNG
-        return; 
+    if (tls->_geom > 0) {
+        tls->_geom--;
+        return;
     }
     tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId));
+    tls->_geom = GetNext(&(tls->_seed), P);
 }
 
 VOID Instruction(INS ins, VOID* v) {
