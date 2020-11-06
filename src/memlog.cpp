@@ -28,6 +28,7 @@ static int fd;
 static PIN_LOCK fdLock;
 static TLS_KEY tls_key = INVALID_TLS_KEY;
 static const double P = 0.01; // TODO: adjust P
+static AFUNPTR mallocUsableSize;
 
 inline size_t GetNext(unsigned int *seedp, double p) {
     int r = rand_r(seedp); // TODO: use better RNG
@@ -89,8 +90,21 @@ VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
 }
 
 VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
+    size_t size = 0;
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, 0, threadId)); // TODO: get size here
+    // If mallocUsableSize is valid, then call malloc_usable_size within application
+    // to fetch size of object
+    // NOTE: malloc_usable_size does not return the same value given to malloc, but
+    // rather the size of the object as recognized by the allocator
+    //
+    if (mallocUsableSize) {
+        PIN_CallApplicationFunction(ctxt, threadId, CALLINGSTD_DEFAULT,
+                                    mallocUsableSize, nullptr,
+                                    PIN_PARG(size_t), &size,
+                                    PIN_PARG(void *), (void *) ptr,
+                                    PIN_PARG_END());
+    }
+    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId));
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
@@ -163,6 +177,13 @@ VOID Image(IMG img, VOID* v) {
 					   0, IARG_END);
 		RTN_Close(rtn);
 	}
+
+    rtn = RTN_FindByName(img, "malloc_usable_size");
+    if (RTN_Valid(rtn)) {
+        mallocUsableSize = RTN_Funptr(rtn);
+    } else {
+        mallocUsableSize = nullptr;
+    }
 }
 
 VOID Fini(INT32 code, VOID* v) {
