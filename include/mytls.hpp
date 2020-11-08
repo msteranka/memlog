@@ -1,3 +1,6 @@
+#if !defined(__MY_TLS_HPP)
+# define __MY_TLS_HPP
+
 #include <list>
 #include <cstdlib>
 #include <unistd.h>
@@ -18,3 +21,5 @@ struct MyTLS {
     size_t _cachedSize, _geom;
     unsigned int _seed;
 };
+
+#endif // __MY_TLS_HPP

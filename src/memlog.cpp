@@ -14,6 +14,9 @@
 #include "mytls.hpp"
 #include <cmath>
 #include <algorithm>
+#include <stdatomic.h>
+#include <sys/mman.h>
+#include <fstream>
 
 #if defined(_MSC_VER)
 # define LIKELY(x) (x)
@@ -36,8 +39,9 @@ using namespace std;
 static int fd;
 static PIN_LOCK fdLock;
 static TLS_KEY tls_key = INVALID_TLS_KEY;
-static const double P = 0.001; // TODO: adjust P
+static const double P = 0.001; // ADJUSTABLE
 static AFUNPTR mallocUsableSize;
+static atomic_uint curTime;
 
 inline size_t GetNext(unsigned int *seedp, double p) {
     int r = rand_r(seedp); // TODO: use better RNG
@@ -47,7 +51,7 @@ inline size_t GetNext(unsigned int *seedp, double p) {
 }
 
 void WriteEvents(int fd, PIN_LOCK *fdLock, list<Event*>* eventsList) {
-    static const size_t BUF_LEN = 65536; // TODO: adjust BUF_LEN
+    static const size_t BUF_LEN = 65536; // ADJUSTABLE
     Event *buf = new Event[BUF_LEN];
     assert(buf != nullptr);
     int nextIndex = 0;
@@ -78,12 +82,12 @@ VOID ThreadStart(THREADID threadId, CONTEXT *ctxt, INT32 flags, VOID *v) {
     MyTLS *tls = new MyTLS;
     BOOL success = PIN_SetThreadData(tls_key, tls, threadId);
     assert(success);
+    tls->_geom = GetNext(&(tls->_seed), P);
 }
 
 VOID ThreadFini(THREADID threadId, const CONTEXT *ctxt, INT32 code, VOID *v) { 
-    // TODO: parse logs
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    WriteEvents(fd, &fdLock, &(tls->_eventsList)); // TODO: no ordering of events between threads
+    WriteEvents(fd, &fdLock, &(tls->_eventsList));
     assert(tls->_eventsList.empty());
     delete tls;
 }
@@ -95,7 +99,8 @@ VOID MallocBefore(THREADID threadId, const CONTEXT* ctxt, ADDRINT size) {
 
 VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId));
+    atomic_fetch_add(&curTime, 1); // TODO: atomics suck, reader/writer?
+    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, atomic_load(&curTime)));
 }
 
 VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
@@ -113,17 +118,17 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
                                     PIN_PARG(void *), (void *) ptr,
                                     PIN_PARG_END());
     }
-    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId));
+    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId, atomic_load(&curTime)));
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
-    static const size_t MAX_SIZE = 1048576; // TODO: write out events somewhere else?
+    static const size_t MAX_SIZE = 1048576; // ADJUSTABLE
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     if (LIKELY(tls->_geom > 0)) {
         tls->_geom--;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId));
+    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, atomic_load(&curTime)));
     if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
         WriteEvents(fd, &fdLock, &(tls->_eventsList));
     }
@@ -136,7 +141,7 @@ VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
         tls->_geom--;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId));
+    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, atomic_load(&curTime)));
     tls->_geom = GetNext(&(tls->_seed), P);
 }
 
@@ -195,9 +200,52 @@ VOID Image(IMG img, VOID* v) {
     }
 }
 
+int eventCompare(const void *ptr1, const void *ptr2) {
+    Event *e1 = (Event *) ptr1, *e2 = (Event *) ptr2;
+
+    // Order by timestamps foremost
+    //
+    if (e1->_timestamp < e2->_timestamp) {
+        return -1;
+    }
+    if (e1->_timestamp > e2->_timestamp) {
+        return 1;
+    }
+
+    // If timestamps are the same, then make sure that
+    // malloc events are put first
+    //
+    if (e1->_action == E_MALLOC) {
+        return -1;
+    }
+    if (e2->_action == E_MALLOC) {
+        return 1;
+    }
+
+    // Make sure that free events are put last
+    //
+    if (e1->_action == E_FREE) {
+        return 1;
+    }
+    if (e2->_action == E_FREE) {
+        return -1;
+    }
+    
+    // Otherwise, ordering doesn't matter
+    //
+    return 0;
+}
+
+std::ifstream::pos_type filesize(const char* filename) {
+    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+    return in.tellg(); 
+}
+
 VOID Fini(INT32 code, VOID* v) {
-    // TODO: order logs here
-    close(fd);
+    std::ifstream::pos_type length = filesize("memlog.bin");
+    Event *e = (Event *) mmap(nullptr, (size_t) length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    assert(e != MAP_FAILED);
+    qsort(e, (size_t) length / sizeof(Event), sizeof(Event), eventCompare); // Sort events - TODO: is quicksort ideal for this?
 }
 
 INT32 Usage() {
@@ -209,12 +257,14 @@ INT32 Usage() {
 int main(int argc, char* argv[]) {
     static const char *path = (const char *) "memlog.bin";
     // static const char *path = (const char *) "/nfs/cm/scratch1/emery/msteranka/memlog.bin";
-    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC,
+    fd = open(path, O_RDWR | O_CREAT | O_TRUNC,
         S_IRUSR | S_IWUSR |
         S_IRGRP | S_IWGRP |
         S_IROTH
     );
     assert(fd != -1);
+
+    atomic_init(&curTime, 0);
 
 	PIN_InitSymbols();
 	if (PIN_Init(argc, argv)) {
