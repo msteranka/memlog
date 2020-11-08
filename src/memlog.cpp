@@ -13,13 +13,22 @@
 #include "event.hpp"
 #include "mytls.hpp"
 #include <cmath>
+#include <algorithm>
 
-#ifdef TARGET_MAC
-#define MALLOC "_malloc"
-#define FREE "_free"
+#if defined(_MSC_VER)
+# define LIKELY(x) (x)
+# define UNLIKELY(x) (x)
 #else
-#define MALLOC "malloc"
-#define FREE "free"
+# define LIKELY(x) __builtin_expect(!!(x), 1)
+# define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif // _MSC_VER
+
+#if defined(TARGET_MAC)
+# define MALLOC "_malloc"
+# define FREE "_free"
+#else
+# define MALLOC "malloc"
+# define FREE "free"
 #endif // TARGET_MAC
 
 using namespace std;
@@ -27,7 +36,7 @@ using namespace std;
 static int fd;
 static PIN_LOCK fdLock;
 static TLS_KEY tls_key = INVALID_TLS_KEY;
-static const double P = 0.01; // TODO: adjust P
+static const double P = 0.001; // TODO: adjust P
 static AFUNPTR mallocUsableSize;
 
 inline size_t GetNext(unsigned int *seedp, double p) {
@@ -38,7 +47,7 @@ inline size_t GetNext(unsigned int *seedp, double p) {
 }
 
 void WriteEvents(int fd, PIN_LOCK *fdLock, list<Event*>* eventsList) {
-    static const size_t BUF_LEN = 524288; // TODO: adjust BUF_LEN
+    static const size_t BUF_LEN = 65536; // TODO: adjust BUF_LEN
     Event *buf = new Event[BUF_LEN];
     assert(buf != nullptr);
     int nextIndex = 0;
@@ -108,14 +117,14 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
-    static const size_t MAX_SIZE = 67108864; // TODO: write out events somewhere else?
+    static const size_t MAX_SIZE = 1048576; // TODO: write out events somewhere else?
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    if (tls->_geom > 0) {
+    if (LIKELY(tls->_geom > 0)) {
         tls->_geom--;
         return;
     }
     tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId));
-    if (tls->_eventsList.size() >= MAX_SIZE) {
+    if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
         WriteEvents(fd, &fdLock, &(tls->_eventsList));
     }
     tls->_geom = GetNext(&(tls->_seed), P);
@@ -123,7 +132,7 @@ VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
 
 VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    if (tls->_geom > 0) {
+    if (LIKELY(tls->_geom > 0)) {
         tls->_geom--;
         return;
     }
