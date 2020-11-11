@@ -104,6 +104,11 @@ VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
 }
 
 VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
+    if ((void *) ptr == nullptr) {
+        // We don't need to track frees to null pointers.
+        return;
+    }
+
     size_t size = 0;
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     // If mallocUsableSize is valid, then call malloc_usable_size within application
