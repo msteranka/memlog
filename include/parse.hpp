@@ -48,6 +48,7 @@ void parseEventsAsArray(std::string pathname, Event **ptr, size_t *length) {
     fd = open(pathname.c_str(), O_RDONLY);
     fstat(fd, &statbuf); // Fetch file size
     *ptr = (Event *) mmap(nullptr, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); // mmap file into memory
+    assert(madvise(*ptr, statbuf.st_size, MADV_SEQUENTIAL) != -1); // Improve performance of iterating linearly
     *length = statbuf.st_size / sizeof(Event);
     close(fd);
 }

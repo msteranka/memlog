@@ -36,12 +36,14 @@
 
 using namespace std;
 
+static const char *const outputPath = "../src/memlog.bin";
+// static const char *const outputPath = "/nfs/cm/scratch1/emery/msteranka/memlog.bin";
 static int fd;
 static PIN_LOCK fdLock;
 static TLS_KEY tls_key = INVALID_TLS_KEY;
 static const double P = 0.001; // ADJUSTABLE
 static AFUNPTR mallocUsableSize;
-static atomic_uint curTime;
+static unsigned int curTime;
 
 inline size_t GetNext(unsigned int *seedp, double p) {
     int r = rand_r(seedp); // TODO: use better RNG
@@ -99,8 +101,11 @@ VOID MallocBefore(THREADID threadId, const CONTEXT* ctxt, ADDRINT size) {
 
 VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    atomic_fetch_add(&curTime, 1); // TODO: atomics suck, reader/writer?
-    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, atomic_load(&curTime)));
+    // No need for atomicity with timestamps. We just need some loose ordering
+    // of events.
+    //
+    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, curTime));
+    curTime++;
 }
 
 VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
@@ -123,7 +128,7 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
                                     PIN_PARG(void *), (void *) ptr,
                                     PIN_PARG_END());
     }
-    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId, atomic_load(&curTime)));
+    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId, curTime));
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
@@ -133,7 +138,7 @@ VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
         tls->_geom--;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, atomic_load(&curTime)));
+    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
     if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
         WriteEvents(fd, &fdLock, &(tls->_eventsList));
     }
@@ -146,7 +151,7 @@ VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
         tls->_geom--;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, atomic_load(&curTime)));
+    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
     tls->_geom = GetNext(&(tls->_seed), P);
 }
 
@@ -241,13 +246,18 @@ int eventCompare(const void *ptr1, const void *ptr2) {
     return 0;
 }
 
-std::ifstream::pos_type filesize(const char* filename) {
-    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+ifstream::pos_type filesize(const char* filename) {
+    ifstream in(filename, ifstream::ate | ifstream::binary);
     return in.tellg(); 
 }
 
 VOID Fini(INT32 code, VOID* v) {
-    std::ifstream::pos_type length = filesize("memlog.bin");
+    ifstream::pos_type length = filesize(outputPath);
+    // TODO: mmapping memlog.bin will crash if memlog.bin is sufficiently large
+    // No idea how to sort something efficiently without bringing the whole thing into memory
+    // Option 1: Have a global list of events that is modified atomically (SLOW)
+    // Option 2: Enfore a hard limit on the maximum number of events that are stored
+    //
     Event *e = (Event *) mmap(nullptr, (size_t) length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     assert(e != MAP_FAILED);
     qsort(e, (size_t) length / sizeof(Event), sizeof(Event), eventCompare); // Sort events - TODO: is quicksort ideal for this?
@@ -260,16 +270,13 @@ INT32 Usage() {
 }
 
 int main(int argc, char* argv[]) {
-    static const char *path = (const char *) "memlog.bin";
-    // static const char *path = (const char *) "/nfs/cm/scratch1/emery/msteranka/memlog.bin";
-    fd = open(path, O_RDWR | O_CREAT | O_TRUNC,
+    fd = open(outputPath, O_RDWR | O_CREAT | O_TRUNC,
         S_IRUSR | S_IWUSR |
         S_IRGRP | S_IWGRP |
         S_IROTH
     );
     assert(fd != -1);
-
-    atomic_init(&curTime, 0);
+    curTime = 0;
 
 	PIN_InitSymbols();
 	if (PIN_Init(argc, argv)) {

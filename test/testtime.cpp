@@ -6,6 +6,7 @@
 
 int main() {
     std::vector<Event> *events = parseEvents("../src/memlog.bin");
+    // std::vector<Event> *events = parseEvents("/nfs/cm/scratch1/emery/msteranka/memlog.bin");
     unsigned int cur, next;
 
     for (int i = 0; i < events->size() - 1; i++) {
