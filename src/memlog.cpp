@@ -84,7 +84,7 @@ VOID ThreadStart(THREADID threadId, CONTEXT *ctxt, INT32 flags, VOID *v) {
     MyTLS *tls = new MyTLS;
     BOOL success = PIN_SetThreadData(tls_key, tls, threadId);
     assert(success);
-    tls->_geom = GetNext(&(tls->_seed), P);
+    tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
 VOID ThreadFini(THREADID threadId, const CONTEXT *ctxt, INT32 code, VOID *v) { 
@@ -135,24 +135,24 @@ VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
     static const size_t MAX_SIZE = 1048576; // ADJUSTABLE
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     if (LIKELY(tls->_geom > 0)) {
-        tls->_geom--;
+        tls->_geom -= readSize;
         return;
     }
     tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
     if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
         WriteEvents(fd, &fdLock, &(tls->_eventsList));
     }
-    tls->_geom = GetNext(&(tls->_seed), P);
+    tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
 VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     if (LIKELY(tls->_geom > 0)) {
-        tls->_geom--;
+        tls->_geom -= writeSize;
         return;
     }
     tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
-    tls->_geom = GetNext(&(tls->_seed), P);
+    tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
 VOID Instruction(INS ins, VOID* v) {

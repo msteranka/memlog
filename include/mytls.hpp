@@ -18,7 +18,11 @@ struct MyTLS {
     }
 
     std::list<Event*> _eventsList;
-    size_t _cachedSize, _geom;
+    size_t _cachedSize;
+    // It's very important that _geom is signed, since when decrementing
+    // it, it's possible for its value to become negative
+    //
+    ssize_t _geom;
     unsigned int _seed;
 };
 
