@@ -10,7 +10,8 @@ enum EventTypes {
     E_WRITE
 };
 
-struct Event {
+class Event {
+public:
     Event() { }
 
     Event(char action, void *addr, unsigned int size, unsigned int threadId, unsigned int timestamp) : 
@@ -20,18 +21,24 @@ struct Event {
         _threadId(threadId),
         _timestamp(timestamp) { }
 
-    Event(char action, void *addr, unsigned int size, unsigned int threadId, unsigned int timestamp, Backtrace& backtrace) : 
-        _action(action), 
-        _addr(addr),
-        _size(size),
-        _threadId(threadId),
-        _timestamp(timestamp),
-        _backtrace(backtrace) { }
-
     char _action;
     void *_addr;
-    unsigned int _size, _threadId, _timestamp; // TODO: no point in storing timestamps in output file
-    Backtrace _backtrace; // TODO: read/writes don't need backtraces
+    unsigned int _size, _threadId, _timestamp;
+};
+
+class AllocationEvent : public Event {
+public:
+    AllocationEvent(char action, void *addr, unsigned int size, unsigned int threadId, unsigned int timestamp, Backtrace& backtrace) : 
+        Event(action, addr, size, threadId, timestamp),
+        _backtrace(backtrace) { }
+
+    Backtrace _backtrace;
+};
+
+class AccessEvent : public Event {
+public:
+    AccessEvent(char action, void *addr, unsigned int size, unsigned int threadId, unsigned int timestamp) : 
+        Event(action, addr, size, threadId, timestamp) { }
 };
 
 std::ostream& operator<<(std::ostream& os, Event& e) {
@@ -39,9 +46,11 @@ std::ostream& operator<<(std::ostream& os, Event& e) {
            "\"addr\":" << (size_t) e._addr << "," <<
            "\"size\":" << e._size << "," <<
            "\"tid\":" << e._threadId << "," <<
-           "\"time\":" << e._timestamp << "," <<
-           "\"backtrace\":" << e._backtrace <<
-           "}";
+           "\"time\":" << e._timestamp; // TODO: no point in storing timestamps in output file
+    if (e._action == E_MALLOC || e._action == E_FREE) {
+        os << ",\"backtrace\":" << ((AllocationEvent&) e)._backtrace;
+    }
+    os << "}";
     return os;
 }
 

@@ -79,7 +79,7 @@ VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
     // No need for atomicity with timestamps. We just need some loose ordering
     // of events.
     //
-    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, curTime, tls->_cachedBacktrace));
+    tls->_eventsList.push_back(new AllocationEvent(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, curTime, tls->_cachedBacktrace));
     curTime++;
 }
 
@@ -91,8 +91,8 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
 
     size_t size = 0;
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    Backtrace b;
-    b.SetTrace(ctxt);
+    Backtrace backtrace;
+    backtrace.SetTrace(ctxt);
     // If mallocUsableSize is valid, then call malloc_usable_size within application
     // to fetch size of object
     // NOTE: malloc_usable_size does not return the same value given to malloc, but
@@ -105,7 +105,7 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
                                     PIN_PARG(void *), (void *) ptr,
                                     PIN_PARG_END());
     }
-    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId, curTime, b));
+    tls->_eventsList.push_back(new AllocationEvent(E_FREE, (void *) ptr, size, threadId, curTime, backtrace));
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
@@ -115,7 +115,7 @@ VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
         tls->_geom -= readSize;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
+    tls->_eventsList.push_back(new AccessEvent(E_READ, (void *) addrRead, readSize, threadId, curTime));
     // if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
     //     WriteEvents(fd, &outputLock, &(tls->_eventsList));
     // }
@@ -128,7 +128,7 @@ VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
         tls->_geom -= writeSize;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
+    tls->_eventsList.push_back(new AccessEvent(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
     tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 

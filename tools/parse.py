@@ -22,8 +22,9 @@ for x in data['events']:
     print('\tSize: ' + str(x['size']))
     print('\tThread ID: ' + str(x['tid']))
     print('\tTime: ' + str(x['time']))
-    print('\tBacktrace: ')
-    b = x['backtrace']
-    print('\t\t' + str(b['0']))
-    print('\t\t' + str(b['1']))
-    print('\t\t' + str(b['2']))
+    if event_type == 0 or event_type == 1:
+        print('\tBacktrace: ')
+        b = x['backtrace']
+        print('\t\t' + str(b['0']))
+        print('\t\t' + str(b['1']))
+        print('\t\t' + str(b['2']))
