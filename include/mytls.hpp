@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include "backtrace.hpp"
 
 struct MyTLS {
     MyTLS() {
@@ -19,6 +20,7 @@ struct MyTLS {
 
     std::list<Event*> _eventsList;
     size_t _cachedSize;
+    Backtrace _cachedBacktrace;
     // It's very important that _geom is signed, since when decrementing
     // it, it's possible for its value to become negative
     //

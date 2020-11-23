@@ -83,6 +83,7 @@ VOID ThreadFini(THREADID threadId, const CONTEXT *ctxt, INT32 code, VOID *v) {
 VOID MallocBefore(THREADID threadId, const CONTEXT* ctxt, ADDRINT size) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     tls->_cachedSize = size;
+    tls->_cachedBacktrace.SetTrace(ctxt);
 }
 
 VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
@@ -90,7 +91,7 @@ VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
     // No need for atomicity with timestamps. We just need some loose ordering
     // of events.
     //
-    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, curTime));
+    tls->_eventsList.push_back(new Event(E_MALLOC, (void *) retVal, tls->_cachedSize, threadId, curTime, tls->_cachedBacktrace));
     curTime++;
 }
 
@@ -102,6 +103,8 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
 
     size_t size = 0;
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
+    Backtrace b;
+    b.SetTrace(ctxt);
     // If mallocUsableSize is valid, then call malloc_usable_size within application
     // to fetch size of object
     // NOTE: malloc_usable_size does not return the same value given to malloc, but
@@ -114,7 +117,7 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
                                     PIN_PARG(void *), (void *) ptr,
                                     PIN_PARG_END());
     }
-    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId, curTime));
+    tls->_eventsList.push_back(new Event(E_FREE, (void *) ptr, size, threadId, curTime, b));
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
