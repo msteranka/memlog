@@ -8,8 +8,7 @@ enum EventTypes {
     E_WRITE
 };
 
-struct Event
-{
+struct Event {
     Event() { }
 
     Event(char action, void *addr, unsigned int size, unsigned int threadId, unsigned int timestamp) : 
@@ -23,5 +22,15 @@ struct Event
     void *_addr;
     unsigned int _size, _threadId, _timestamp; // TODO: no point in storing timestamps in output file
 };
+
+std::ostream& operator<<(std::ostream& os, Event& e) {
+    os << "{\"type\":" << (int) e._action << "," <<
+           "\"addr\":" << (size_t) e._addr << "," <<
+           "\"size\":" << e._size << "," <<
+           "\"tid\":" << e._threadId << "," <<
+           "\"time\":" << e._timestamp <<
+           "}";
+    return os;
+}
 
 #endif // __EVENT_HPP

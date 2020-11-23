@@ -36,10 +36,11 @@
 
 using namespace std;
 
-static const char *const outputPath = "../src/memlog.bin";
+static const char *const outputPath = "memlog.json";
 // static const char *const outputPath = "/nfs/cm/scratch1/emery/msteranka/memlog.bin";
-static int fd;
-static PIN_LOCK fdLock;
+static ofstream traceFile;
+static KNOB<string> knobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", outputPath, "specify profiling file name");
+static PIN_LOCK outputLock;
 static TLS_KEY tls_key = INVALID_TLS_KEY;
 static const double P = 0.001; // ADJUSTABLE
 static AFUNPTR mallocUsableSize;
@@ -52,45 +53,30 @@ inline size_t GetNext(unsigned int *seedp, double p) {
     return geom;
 }
 
-void WriteEvents(int fd, PIN_LOCK *fdLock, list<Event*>* eventsList) {
-    static const size_t BUF_LEN = 65536; // ADJUSTABLE
-    Event *buf = new Event[BUF_LEN];
-    assert(buf != nullptr);
-    int nextIndex = 0;
-    ssize_t err;
-
+void WriteEvents(PIN_LOCK *outputLock, list<Event*>* eventsList) {
     while (!eventsList->empty()) {
         auto it = eventsList->begin();
-        buf[nextIndex] = **it;
-        nextIndex = (nextIndex + 1) % BUF_LEN;
-        if (nextIndex == 0) {
-            PIN_GetLock(fdLock, -1);
-            err = write(fd, buf, sizeof(Event) * BUF_LEN);
-            PIN_ReleaseLock(fdLock);
-            assert(err != -1);
+        PIN_GetLock(outputLock, -1);
+        if (eventsList->size() > 1) {
+            traceFile << **it << ",";
+        } else {
+            traceFile << **it;
         }
+        PIN_ReleaseLock(outputLock);
         delete *it;
         eventsList->pop_front();
     }
-
-    PIN_GetLock(fdLock, -1);
-    err = write(fd, buf, sizeof(Event) * nextIndex);
-    PIN_ReleaseLock(fdLock);
-    assert(err != -1);
-    delete[] buf;
 }
 
 VOID ThreadStart(THREADID threadId, CONTEXT *ctxt, INT32 flags, VOID *v) {
     MyTLS *tls = new MyTLS;
-    BOOL success = PIN_SetThreadData(tls_key, tls, threadId);
-    assert(success);
+    assert(PIN_SetThreadData(tls_key, tls, threadId));
     tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
 VOID ThreadFini(THREADID threadId, const CONTEXT *ctxt, INT32 code, VOID *v) { 
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    WriteEvents(fd, &fdLock, &(tls->_eventsList));
-    assert(tls->_eventsList.empty());
+    WriteEvents(&outputLock, &(tls->_eventsList));
     delete tls;
 }
 
@@ -132,16 +118,16 @@ VOID FreeHook(THREADID threadId, const CONTEXT* ctxt, ADDRINT ptr) {
 }
 
 VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
-    static const size_t MAX_SIZE = 1048576; // ADJUSTABLE
+    // static const size_t MAX_SIZE = 1048576; // ADJUSTABLE
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     if (LIKELY(tls->_geom > 0)) {
         tls->_geom -= readSize;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
-    if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
-        WriteEvents(fd, &fdLock, &(tls->_eventsList));
-    }
+    // tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
+    // if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
+    //     WriteEvents(fd, &outputLock, &(tls->_eventsList));
+    // }
     tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
@@ -151,7 +137,7 @@ VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
         tls->_geom -= writeSize;
         return;
     }
-    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
+    // tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
     tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
@@ -246,21 +232,8 @@ int eventCompare(const void *ptr1, const void *ptr2) {
     return 0;
 }
 
-ifstream::pos_type filesize(const char* filename) {
-    ifstream in(filename, ifstream::ate | ifstream::binary);
-    return in.tellg(); 
-}
-
 VOID Fini(INT32 code, VOID* v) {
-    ifstream::pos_type length = filesize(outputPath);
-    // TODO: mmapping memlog.bin will crash if memlog.bin is sufficiently large
-    // No idea how to sort something efficiently without bringing the whole thing into memory
-    // Option 1: Have a global list of events that is modified atomically (SLOW)
-    // Option 2: Enfore a hard limit on the maximum number of events that are stored
-    //
-    Event *e = (Event *) mmap(nullptr, (size_t) length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    assert(e != MAP_FAILED);
-    qsort(e, (size_t) length / sizeof(Event), sizeof(Event), eventCompare); // Sort events - TODO: is quicksort ideal for this?
+    traceFile << "]}";
 }
 
 INT32 Usage() {
@@ -270,20 +243,16 @@ INT32 Usage() {
 }
 
 int main(int argc, char* argv[]) {
-    fd = open(outputPath, O_RDWR | O_CREAT | O_TRUNC,
-        S_IRUSR | S_IWUSR |
-        S_IRGRP | S_IWGRP |
-        S_IROTH
-    );
-    assert(fd != -1);
-    curTime = 0;
-
 	PIN_InitSymbols();
 	if (PIN_Init(argc, argv)) {
 		return Usage();
 	}
 
-    PIN_InitLock(&fdLock);
+    curTime = 0;
+    traceFile.open(knobOutputFile.Value().c_str());
+    traceFile.setf(ios::showbase);
+    traceFile << "{\"events\":["; // Begin JSON
+    PIN_InitLock(&outputLock);
     tls_key = PIN_CreateThreadDataKey(NULL);
     if (tls_key == INVALID_TLS_KEY) {
         cerr << "Number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
