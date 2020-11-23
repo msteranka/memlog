@@ -24,7 +24,5 @@ for x in data['events']:
     print('\tTime: ' + str(x['time']))
     if event_type == 0 or event_type == 1:
         print('\tBacktrace: ')
-        b = x['backtrace']
-        print('\t\t' + str(b['0']))
-        print('\t\t' + str(b['1']))
-        print('\t\t' + str(b['2']))
+        for y in x['backtrace']:
+            print('\t\t' + str(y['path']) + ':' + str(y['line']))

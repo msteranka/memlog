@@ -77,21 +77,20 @@ ostream& operator<<(ostream& os, Backtrace& bt) {
     pair<string,INT32> *t;
     t = bt.GetTrace();
 
-    os << "{";
+    os << "[";
     for (int i = 0; i < maxDepth; i++) {
         if (t[i].first == "") { // If PIN_GetSourceLocation failed
-            os << "\"" << i << "\":\"\"";
+            os << "{\"path\":\"\",\"line\":0}";
         }
         else {
-            os << "\"" << i << "\":\"" << t[i].first << ":" 
-                << t[i].second << "\"";
+            os << "{\"path\":\"" << t[i].first << "\",\"line\":" 
+                << t[i].second << "}";
         }
-        if (i == maxDepth - 1) { // If this is the last stack frame
-            os << "}";
-        } else {
+        if (i < maxDepth - 1) { // If there's another frame after this one
             os << ",";
         }
     }
+    os << "]";
     return os;
 }
 
