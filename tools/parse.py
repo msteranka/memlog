@@ -1,4 +1,4 @@
-import enum, json, sys
+import json, sys
 
 json_file = '../src/memlog.json'
 

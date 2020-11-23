@@ -15,7 +15,6 @@
 #include <cmath>
 #include <algorithm>
 #include <stdatomic.h>
-#include <sys/mman.h>
 #include <fstream>
 
 #if defined(_MSC_VER)
@@ -45,6 +44,8 @@ static TLS_KEY tls_key = INVALID_TLS_KEY;
 static const double P = 0.001; // ADJUSTABLE
 static AFUNPTR mallocUsableSize;
 static unsigned int curTime;
+static list<MyTLS*> tlsList;
+static PIN_LOCK tlsListLock;
 
 inline size_t GetNext(unsigned int *seedp, double p) {
     int r = rand_r(seedp); // TODO: use better RNG
@@ -53,32 +54,16 @@ inline size_t GetNext(unsigned int *seedp, double p) {
     return geom;
 }
 
-void WriteEvents(PIN_LOCK *outputLock, list<Event*>* eventsList) {
-    while (!eventsList->empty()) {
-        auto it = eventsList->begin();
-        PIN_GetLock(outputLock, -1);
-        if (eventsList->size() > 1) {
-            traceFile << **it << ",";
-        } else {
-            traceFile << **it;
-        }
-        PIN_ReleaseLock(outputLock);
-        delete *it;
-        eventsList->pop_front();
-    }
-}
-
 VOID ThreadStart(THREADID threadId, CONTEXT *ctxt, INT32 flags, VOID *v) {
     MyTLS *tls = new MyTLS;
     assert(PIN_SetThreadData(tls_key, tls, threadId));
+    PIN_GetLock(&tlsListLock, -1);
+    tlsList.push_back(tls);
+    PIN_ReleaseLock(&tlsListLock);
     tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
-VOID ThreadFini(THREADID threadId, const CONTEXT *ctxt, INT32 code, VOID *v) { 
-    MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
-    WriteEvents(&outputLock, &(tls->_eventsList));
-    delete tls;
-}
+VOID ThreadFini(THREADID threadId, const CONTEXT *ctxt, INT32 code, VOID *v) { }
 
 VOID MallocBefore(THREADID threadId, const CONTEXT* ctxt, ADDRINT size) {
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
@@ -87,6 +72,9 @@ VOID MallocBefore(THREADID threadId, const CONTEXT* ctxt, ADDRINT size) {
 }
 
 VOID MallocAfter(THREADID threadId, ADDRINT retVal) {
+    if ((void *) retVal == nullptr) { 
+        return;
+    }
     MyTLS *tls = static_cast<MyTLS*>(PIN_GetThreadData(tls_key, threadId));
     // No need for atomicity with timestamps. We just need some loose ordering
     // of events.
@@ -127,7 +115,7 @@ VOID ReadsMem(THREADID threadId, ADDRINT addrRead, UINT32 readSize) {
         tls->_geom -= readSize;
         return;
     }
-    // tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
+    tls->_eventsList.push_back(new Event(E_READ, (void *) addrRead, readSize, threadId, curTime));
     // if (UNLIKELY(tls->_eventsList.size() >= MAX_SIZE)) {
     //     WriteEvents(fd, &outputLock, &(tls->_eventsList));
     // }
@@ -140,7 +128,7 @@ VOID WritesMem(THREADID threadId, ADDRINT addrWritten, UINT32 writeSize) {
         tls->_geom -= writeSize;
         return;
     }
-    // tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
+    tls->_eventsList.push_back(new Event(E_WRITE, (void *) addrWritten, writeSize, threadId, curTime));
     tls->_geom = (ssize_t) GetNext(&(tls->_seed), P);
 }
 
@@ -199,43 +187,64 @@ VOID Image(IMG img, VOID* v) {
     }
 }
 
-int eventCompare(const void *ptr1, const void *ptr2) {
-    Event *e1 = (Event *) ptr1, *e2 = (Event *) ptr2;
-
+bool eventCompare(const Event *e1, const Event *e2) {
     // Order by timestamps foremost
     //
     if (e1->_timestamp < e2->_timestamp) {
-        return -1;
+        return true;
     }
     if (e1->_timestamp > e2->_timestamp) {
-        return 1;
+        return false;
     }
 
     // If timestamps are the same, then make sure that
     // malloc events are put first
     //
     if (e1->_action == E_MALLOC) {
-        return -1;
+        return true;
     }
     if (e2->_action == E_MALLOC) {
-        return 1;
+        return false;
     }
 
     // Make sure that free events are put last
     //
     if (e1->_action == E_FREE) {
-        return 1;
+        return false;
     }
     if (e2->_action == E_FREE) {
-        return -1;
+        return true;
     }
     
     // Otherwise, ordering doesn't matter
     //
-    return 0;
+    return true;
 }
 
 VOID Fini(INT32 code, VOID* v) {
+    list<Event*> allEvents; // Move events to single data structure and sort
+    while (!tlsList.empty()) {
+        list<Event*> *curList = &(tlsList.front()->_eventsList);
+        while (!curList->empty()) {
+            allEvents.push_back(curList->front());
+            curList->pop_front();
+        }
+        delete tlsList.front();
+        tlsList.pop_front();
+    }
+    allEvents.sort(eventCompare);
+
+    traceFile << "{\"events\":["; // Output events
+    while (!allEvents.empty()) {
+        auto it = allEvents.begin();
+        if (allEvents.size() > 1) {
+            traceFile << **it << ",";
+        } else {
+            traceFile << **it;
+        }
+        delete *it;
+        allEvents.pop_front();
+    }
     traceFile << "]}";
 }
 
@@ -254,8 +263,8 @@ int main(int argc, char* argv[]) {
     curTime = 0;
     traceFile.open(knobOutputFile.Value().c_str());
     traceFile.setf(ios::showbase);
-    traceFile << "{\"events\":["; // Begin JSON
     PIN_InitLock(&outputLock);
+    PIN_InitLock(&tlsListLock);
     tls_key = PIN_CreateThreadDataKey(NULL);
     if (tls_key == INVALID_TLS_KEY) {
         cerr << "Number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
