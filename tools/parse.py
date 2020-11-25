@@ -5,6 +5,10 @@ json_file = '../src/heapshark.json'
 with open(json_file, 'r') as f:
     data = json.load(f)
 
+metadata = data['metadata']
+print('Sampling Rate: ' + str(metadata['samplingRate']))
+print('Maximum Number of Frames: ' + str(metadata['maxDepth']) + '\n')
+
 for x in data['events']:
     event_type = x['type']
     if event_type == 0:

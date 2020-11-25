@@ -217,7 +217,7 @@ VOID Fini(INT32 code, VOID* v) {
 
     // Output sorted events in JSON format
     //
-    HeapSharkParams::traceFile << "{\"events\":[";
+    HeapSharkParams::traceFile << "\"events\":[";
     while (!allEvents.empty()) {
         auto it = allEvents.begin();
         if (allEvents.size() > 1) {
@@ -287,13 +287,19 @@ int main(int argc, char* argv[]) {
     }
     BacktraceParams::maxDepth = HeapSharkParams::maxDepth;
 
+    // TODO: JSON formatting is a headache when it's not all done in one place...
+    //
+    HeapSharkParams::traceFile << "{\"metadata\":{\"samplingRate\":" << 
+                  HeapSharkParams::samplingRate << 
+                  ",\"maxDepth\":" << 
+                  HeapSharkParams::maxDepth << "},";
+
     // Initialize TLS related data
     //
     PIN_InitLock(&TLSData::tlsListLock);
     TLSData::tlsKey = PIN_CreateThreadDataKey(NULL);
     if (TLSData::tlsKey == INVALID_TLS_KEY) {
-        cerr << "Number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
-        PIN_ExitProcess(1);
+        Fatal("Number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit");
     }
 
     curTime = 0;
