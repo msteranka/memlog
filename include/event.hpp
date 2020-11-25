@@ -54,4 +54,38 @@ std::ostream& operator<<(std::ostream& os, Event& e) {
     return os;
 }
 
+bool eventCompare(const Event *e1, const Event *e2) {
+    // Order by timestamps foremost
+    //
+    if (e1->_timestamp < e2->_timestamp) {
+        return true;
+    }
+    if (e1->_timestamp > e2->_timestamp) {
+        return false;
+    }
+
+    // If timestamps are the same, then make sure that
+    // malloc events are put first
+    //
+    if (e1->_action == E_MALLOC) {
+        return true;
+    }
+    if (e2->_action == E_MALLOC) {
+        return false;
+    }
+
+    // Make sure that free events are put last
+    //
+    if (e1->_action == E_FREE) {
+        return false;
+    }
+    if (e2->_action == E_FREE) {
+        return true;
+    }
+    
+    // Otherwise, ordering doesn't matter
+    //
+    return true;
+}
+
 #endif // __EVENT_HPP

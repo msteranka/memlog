@@ -1,12 +1,16 @@
 #if !defined(__BACKTRACE_HPP)
 # define __BACKTRACE_HPP
 
-#include "pin.H"
 #include <iostream>
+#include "pin.H"
 
 using namespace std;
 
-static const INT32 maxDepth = 3;
+// TODO: Why not put all parameters in one file?
+//
+namespace BacktraceParams {
+    INT32 maxDepth;
+};
 
 // Nothing within Backtrace is thread-safe since all of its
 // methods are only ever executed by one thread
@@ -17,7 +21,8 @@ public:
     // that it will go down
     //
     Backtrace() {
-        for (INT32 i = 0; i < maxDepth; i++) {
+        trace = new pair<string,INT32>[BacktraceParams::maxDepth];
+        for (INT32 i = 0; i < BacktraceParams::maxDepth; i++) {
             trace[i].first = "";
             trace[i].second = 0;
         }
@@ -27,7 +32,7 @@ public:
         // buf contains maxDepth + 1 addresses because PIN_Backtrace also returns
         // the stack frame for malloc/free
         //
-        VOID *buf[maxDepth + 1];
+        VOID *buf[BacktraceParams::maxDepth + 1];
         INT32 depth;
 
         if (ctxt == nullptr) {
@@ -38,7 +43,7 @@ public:
         // and PIN_GetSourceLocation
         //
         PIN_LockClient();
-        depth = PIN_Backtrace(ctxt, buf, maxDepth + 1) - 1;
+        depth = PIN_Backtrace(ctxt, buf, BacktraceParams::maxDepth + 1) - 1;
 
         // We set i = 1 because we don't want to include the stack frame 
         // for malloc/free
@@ -59,18 +64,23 @@ public:
     pair<string,INT32> *GetTrace() { return trace; }
 
     Backtrace &operator=(const Backtrace &b) {
-        for (INT32 i = 0; i < maxDepth; i++) {
+        for (INT32 i = 0; i < BacktraceParams::maxDepth; i++) {
             trace[i].first = b.trace[i].first;
             trace[i].second = b.trace[i].second;
         }
         return *this;
     }
 
+    ~Backtrace() {
+        // TODO: potential memory leak -- safe to delete in destructor?
+        // delete[] trace;
+    }
+
 private:
     // trace consists of all invocation points of malloc/free, 
     // represented as a pairing of a file name and a line number
     //
-    pair<string,INT32> trace[maxDepth];
+    pair<string,INT32> *trace;
 };
 
 ostream& operator<<(ostream& os, Backtrace& bt) {
@@ -78,7 +88,7 @@ ostream& operator<<(ostream& os, Backtrace& bt) {
     t = bt.GetTrace();
 
     os << "[";
-    for (int i = 0; i < maxDepth; i++) {
+    for (int i = 0; i < BacktraceParams::maxDepth; i++) {
         if (t[i].first == "") { // If PIN_GetSourceLocation failed
             os << "{\"path\":\"\",\"line\":0}";
         }
@@ -86,7 +96,7 @@ ostream& operator<<(ostream& os, Backtrace& bt) {
             os << "{\"path\":\"" << t[i].first << "\",\"line\":" 
                 << t[i].second << "}";
         }
-        if (i < maxDepth - 1) { // If there's another frame after this one
+        if (i < BacktraceParams::maxDepth - 1) { // If there's another frame after this one
             os << ",";
         }
     }

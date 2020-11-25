@@ -1,6 +1,6 @@
 import json, sys
 
-json_file = '../src/memlog.json'
+json_file = '../src/heapshark.json'
 
 with open(json_file, 'r') as f:
     data = json.load(f)
@@ -25,4 +25,7 @@ for x in data['events']:
     if event_type == 0 or event_type == 1:
         print('\tBacktrace: ')
         for y in x['backtrace']:
-            print('\t\t' + str(y['path']) + ':' + str(y['line']))
+            if y['path'] == '':
+                print('\t\t(NIL)')
+            else:
+                print('\t\t' + str(y['path']) + ':' + str(y['line']))
