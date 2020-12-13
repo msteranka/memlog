@@ -248,14 +248,14 @@ int main(int argc, char* argv[]) {
     // Declare configurable HeapShark parameters
     //
     const string defaultOutputFile = "heapshark.json", 
-                 defaultSamplingRate = "0.001", 
+                 defaultSamplingRate = "0", 
                  defaultMaxDepth = "3";
     KNOB<string> knobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", 
-                                defaultOutputFile, 
-                                "Output file");
+                                    defaultOutputFile, 
+                                    "Output file");
     KNOB<double> knobSamplingRate(KNOB_MODE_WRITEONCE, "pintool", "s", 
-                                  defaultSamplingRate, 
-                                  "Percentage of reads/writes to record");
+                                    defaultSamplingRate, 
+                                    "Percentage of memory accesses to record");
     KNOB<unsigned int> knobMaxDepth(KNOB_MODE_WRITEONCE, "pintool", "d", 
                                     defaultMaxDepth, 
                                     "Maximum number of frames to stores in backtraces");
@@ -276,10 +276,7 @@ int main(int argc, char* argv[]) {
 
     // Check parameters for validity
     //
-    // TODO: need to check if traceFile is valid?
     if (HeapSharkParams::samplingRate < 0 || HeapSharkParams::samplingRate > 1) {
-        // TODO: Sampling rate of 0 shouldn't logs reads/writes at all
-        //
         Fatal("Sampling rate must be within the interval [0, 1]");
     }
     if (HeapSharkParams::maxDepth > 256) {
@@ -307,7 +304,9 @@ int main(int argc, char* argv[]) {
     // Add instrumentation functions
     //
 	IMG_AddInstrumentFunction(Image, 0);
-	INS_AddInstrumentFunction(Instruction, 0);
+    if (HeapSharkParams::samplingRate > 0) {
+        INS_AddInstrumentFunction(Instruction, 0);
+    }
 	PIN_AddThreadStartFunction(ThreadStart, 0);
 	PIN_AddThreadFiniFunction(ThreadFini, 0);
 	PIN_AddFiniFunction(Fini, 0);
